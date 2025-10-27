@@ -46,7 +46,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     
     try:
         if method == 'GET':
-            cur.execute("""
+            query = f"""
                 SELECT DISTINCT
                     c.id,
                     c.type,
@@ -54,31 +54,32 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     c.avatar,
                     CASE 
                         WHEN c.type = 'private' THEN (
-                            SELECT u.name FROM users u
-                            JOIN chat_members cm ON cm.user_id = u.id
-                            WHERE cm.chat_id = c.id AND u.id != %s
+                            SELECT users.name FROM users
+                            JOIN chat_members ON chat_members.user_id = users.id
+                            WHERE chat_members.chat_id = c.id AND users.id != {user_id}
                             LIMIT 1
                         )
                         ELSE c.name
                     END as display_name,
                     CASE 
                         WHEN c.type = 'private' THEN (
-                            SELECT u.avatar FROM users u
-                            JOIN chat_members cm ON cm.user_id = u.id
-                            WHERE cm.chat_id = c.id AND u.id != %s
+                            SELECT users.avatar FROM users
+                            JOIN chat_members ON chat_members.user_id = users.id
+                            WHERE chat_members.chat_id = c.id AND users.id != {user_id}
                             LIMIT 1
                         )
                         ELSE c.avatar
                     END as display_avatar,
                     (SELECT content FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message,
                     (SELECT created_at FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_time,
-                    (SELECT COUNT(*) FROM messages WHERE chat_id = c.id AND sender_id != %s AND is_read = false) as unread_count
+                    (SELECT COUNT(*) FROM messages WHERE chat_id = c.id AND sender_id != {user_id} AND is_read = false) as unread_count
                 FROM chats c
                 JOIN chat_members cm ON cm.chat_id = c.id
-                WHERE cm.user_id = %s
+                WHERE cm.user_id = {user_id}
                 ORDER BY last_message_time DESC NULLS LAST
-            """, (user_id, user_id, user_id, user_id))
+            """
             
+            cur.execute(query)
             chats = cur.fetchall()
             
             return {
@@ -92,18 +93,19 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             body_data = json.loads(event.get('body', '{}'))
             chat_type = body_data.get('type', 'private')
             other_user_id = body_data.get('other_user_id')
-            name = body_data.get('name')
-            avatar = body_data.get('avatar', '👥')
+            name = body_data.get('name', '').replace("'", "''")
+            avatar = body_data.get('avatar', '👥').replace("'", "''")
             
             if chat_type == 'private' and other_user_id:
-                cur.execute("""
+                check_query = f"""
                     SELECT c.id FROM chats c
-                    JOIN chat_members cm1 ON cm1.chat_id = c.id AND cm1.user_id = %s
-                    JOIN chat_members cm2 ON cm2.chat_id = c.id AND cm2.user_id = %s
+                    JOIN chat_members cm1 ON cm1.chat_id = c.id AND cm1.user_id = {user_id}
+                    JOIN chat_members cm2 ON cm2.chat_id = c.id AND cm2.user_id = {other_user_id}
                     WHERE c.type = 'private'
                     LIMIT 1
-                """, (user_id, other_user_id))
+                """
                 
+                cur.execute(check_query)
                 existing_chat = cur.fetchone()
                 
                 if existing_chat:
@@ -114,23 +116,20 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         'isBase64Encoded': False
                     }
             
-            cur.execute(
-                "INSERT INTO chats (type, name, avatar, created_by) VALUES (%s, %s, %s, %s) RETURNING id",
-                (chat_type, name, avatar, user_id)
-            )
+            insert_query = f"""
+                INSERT INTO chats (type, name, avatar, created_by) 
+                VALUES ('{chat_type}', {f"'{name}'" if name else 'NULL'}, '{avatar}', {user_id}) 
+                RETURNING id
+            """
+            
+            cur.execute(insert_query)
             new_chat = cur.fetchone()
             chat_id = new_chat['id']
             
-            cur.execute(
-                "INSERT INTO chat_members (chat_id, user_id, role) VALUES (%s, %s, %s)",
-                (chat_id, user_id, 'admin')
-            )
+            cur.execute(f"INSERT INTO chat_members (chat_id, user_id, role) VALUES ({chat_id}, {user_id}, 'admin')")
             
             if chat_type == 'private' and other_user_id:
-                cur.execute(
-                    "INSERT INTO chat_members (chat_id, user_id) VALUES (%s, %s)",
-                    (chat_id, other_user_id)
-                )
+                cur.execute(f"INSERT INTO chat_members (chat_id, user_id) VALUES ({chat_id}, {other_user_id})")
             
             conn.commit()
             

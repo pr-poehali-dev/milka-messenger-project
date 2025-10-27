@@ -11,7 +11,7 @@ from psycopg2.extras import RealDictCursor
 from typing import Dict, Any
 import uuid
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
 
 def get_db_connection():
     dsn = os.environ.get('DATABASE_URL')
@@ -47,9 +47,9 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         try:
             if action == 'register':
-                phone = body_data.get('phone', '').strip()
-                name = body_data.get('name', '').strip()
-                avatar = body_data.get('avatar', '👤')
+                phone = body_data.get('phone', '').strip().replace("'", "''")
+                name = body_data.get('name', '').strip().replace("'", "''")
+                avatar = body_data.get('avatar', '👤').replace("'", "''")
                 
                 if not phone or not name:
                     return {
@@ -59,10 +59,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         'isBase64Encoded': False
                     }
                 
-                cur.execute(
-                    "SELECT id, phone, name, avatar FROM users WHERE phone = %s",
-                    (phone,)
-                )
+                check_query = f"SELECT id, phone, name, avatar FROM users WHERE phone = '{phone}'"
+                cur.execute(check_query)
                 existing_user = cur.fetchone()
                 
                 if existing_user:
@@ -79,11 +77,40 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         'isBase64Encoded': False
                     }
                 
-                cur.execute(
-                    "INSERT INTO users (phone, name, avatar, is_online) VALUES (%s, %s, %s, true) RETURNING id, phone, name, avatar",
-                    (phone, name, avatar)
-                )
+                insert_query = f"""
+                    INSERT INTO users (phone, name, avatar, is_online) 
+                    VALUES ('{phone}', '{name}', '{avatar}', true) 
+                    RETURNING id, phone, name, avatar
+                """
+                
+                cur.execute(insert_query)
                 new_user = cur.fetchone()
+                new_user_id = new_user['id']
+                
+                existing_users_query = f"SELECT id FROM users WHERE id != {new_user_id} LIMIT 3"
+                cur.execute(existing_users_query)
+                existing_users = cur.fetchall()
+                
+                for existing_user in existing_users:
+                    check_chat_query = f"""
+                        SELECT c.id FROM chats c
+                        JOIN chat_members cm1 ON cm1.chat_id = c.id AND cm1.user_id = {new_user_id}
+                        JOIN chat_members cm2 ON cm2.chat_id = c.id AND cm2.user_id = {existing_user['id']}
+                        WHERE c.type = 'private'
+                        LIMIT 1
+                    """
+                    cur.execute(check_chat_query)
+                    existing_chat = cur.fetchone()
+                    
+                    if not existing_chat:
+                        create_chat_query = f"INSERT INTO chats (type, created_by) VALUES ('private', {new_user_id}) RETURNING id"
+                        cur.execute(create_chat_query)
+                        new_chat = cur.fetchone()
+                        chat_id = new_chat['id']
+                        
+                        cur.execute(f"INSERT INTO chat_members (chat_id, user_id, role) VALUES ({chat_id}, {new_user_id}, 'admin')")
+                        cur.execute(f"INSERT INTO chat_members (chat_id, user_id) VALUES ({chat_id}, {existing_user['id']})")
+                
                 conn.commit()
                 
                 session_token = generate_session_token(phone)
@@ -100,7 +127,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 }
             
             elif action == 'login':
-                phone = body_data.get('phone', '').strip()
+                phone = body_data.get('phone', '').strip().replace("'", "''")
                 
                 if not phone:
                     return {
@@ -110,10 +137,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         'isBase64Encoded': False
                     }
                 
-                cur.execute(
-                    "SELECT id, phone, name, avatar FROM users WHERE phone = %s",
-                    (phone,)
-                )
+                select_query = f"SELECT id, phone, name, avatar FROM users WHERE phone = '{phone}'"
+                cur.execute(select_query)
                 user = cur.fetchone()
                 
                 if not user:
@@ -124,10 +149,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         'isBase64Encoded': False
                     }
                 
-                cur.execute(
-                    "UPDATE users SET is_online = true, last_seen = CURRENT_TIMESTAMP WHERE id = %s",
-                    (user['id'],)
-                )
+                update_query = f"UPDATE users SET is_online = true, last_seen = CURRENT_TIMESTAMP WHERE id = {user['id']}"
+                cur.execute(update_query)
                 conn.commit()
                 
                 session_token = generate_session_token(phone)

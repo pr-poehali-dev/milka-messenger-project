@@ -57,7 +57,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     'isBase64Encoded': False
                 }
             
-            cur.execute("""
+            query = f"""
                 SELECT 
                     m.id,
                     m.content,
@@ -69,17 +69,19 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     u.avatar as sender_avatar
                 FROM messages m
                 JOIN users u ON u.id = m.sender_id
-                WHERE m.chat_id = %s
+                WHERE m.chat_id = {chat_id}
                 ORDER BY m.created_at ASC
-            """, (chat_id,))
+            """
             
+            cur.execute(query)
             messages = cur.fetchall()
             
-            cur.execute("""
+            update_query = f"""
                 UPDATE messages 
                 SET is_read = true 
-                WHERE chat_id = %s AND sender_id != %s AND is_read = false
-            """, (chat_id, user_id))
+                WHERE chat_id = {chat_id} AND sender_id != {user_id} AND is_read = false
+            """
+            cur.execute(update_query)
             conn.commit()
             
             return {
@@ -92,7 +94,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         elif method == 'POST':
             body_data = json.loads(event.get('body', '{}'))
             chat_id = body_data.get('chat_id')
-            content = body_data.get('content', '').strip()
+            content = body_data.get('content', '').strip().replace("'", "''")
             msg_type = body_data.get('type', 'text')
             
             if not chat_id or not content:
@@ -103,10 +105,13 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     'isBase64Encoded': False
                 }
             
-            cur.execute(
-                "INSERT INTO messages (chat_id, sender_id, content, type) VALUES (%s, %s, %s, %s) RETURNING id, created_at",
-                (chat_id, user_id, content, msg_type)
-            )
+            insert_query = f"""
+                INSERT INTO messages (chat_id, sender_id, content, type) 
+                VALUES ({chat_id}, {user_id}, '{content}', '{msg_type}') 
+                RETURNING id, created_at
+            """
+            
+            cur.execute(insert_query)
             new_message = cur.fetchone()
             conn.commit()
             
