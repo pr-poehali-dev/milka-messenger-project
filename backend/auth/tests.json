@@ -1,0 +1,46 @@
+{
+  "tests": [
+    {
+      "name": "Register new user",
+      "method": "POST",
+      "body": {
+        "action": "register",
+        "phone": "+79991234567",
+        "name": "Тестовый Пользователь",
+        "avatar": "🧑‍💻"
+      },
+      "expectedStatus": 201,
+      "expectedBody": {
+        "message": "string",
+        "user": {
+          "id": "number",
+          "phone": "string",
+          "name": "string",
+          "avatar": "string"
+        },
+        "session_token": "string"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Login existing user",
+      "method": "POST",
+      "body": {
+        "action": "login",
+        "phone": "+79001234567"
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "message": "string",
+        "user": {
+          "id": "number",
+          "phone": "string",
+          "name": "string",
+          "avatar": "string"
+        },
+        "session_token": "string"
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}
